@@ -2,7 +2,7 @@
 
 macOS menu bar app that polls [status.claude.com](https://status.claude.com) and shows Claude's health at a glance.
 
-![Menu bar showing colored dot and Claude label](https://status.claude.com/favicon.ico)
+![Claude Status menu bar app](screenshot.png)
 
 ## What it shows
 
