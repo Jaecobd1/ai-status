@@ -67,6 +67,15 @@ struct StatuspageResponse: Decodable {
     let status: PageStatus
     let components: [SPComponent]
     let incidents: [SPIncident]
+
+    enum CodingKeys: String, CodingKey { case status, components, incidents }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status     = try c.decode(PageStatus.self, forKey: .status)
+        components = (try? c.decode([SPComponent].self, forKey: .components)) ?? []
+        incidents  = (try? c.decode([SPIncident].self,  forKey: .incidents))  ?? []
+    }
 }
 
 struct PageStatus: Decodable {
@@ -84,9 +93,29 @@ struct SPComponent: Decodable {
         case name, status, group
         case onlyShowIfDegraded = "only_show_if_degraded"
     }
+
+    // group / only_show_if_degraded are absent in some providers (OpenAI, Groq, Cohere)
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name               = try  c.decode(String.self, forKey: .name)
+        status             = try  c.decode(String.self, forKey: .status)
+        group              = (try? c.decode(Bool.self,  forKey: .group))              ?? false
+        onlyShowIfDegraded = (try? c.decode(Bool.self,  forKey: .onlyShowIfDegraded)) ?? false
+    }
 }
 
 struct SPIncident: Decodable {
+    let name: String
+}
+
+// MARK: - Instatus JSON (Perplexity)
+
+struct InstatusResponse: Decodable {
+    let page: InstatusPage
+}
+
+struct InstatusPage: Decodable {
+    let status: String
     let name: String
 }
 
@@ -112,6 +141,7 @@ enum FetchState {
 
 enum ProviderKind {
     case statuspage(apiURL: URL, pageURL: URL)
+    case instatus(apiURL: URL, pageURL: URL)   // Instatus.com format (e.g. Perplexity)
     case ollama(baseURL: URL)
     // ── Adding a custom provider ─────────────────────────────────────────────
     // Statuspage-compatible (includes Instatus):
@@ -160,7 +190,7 @@ var allProviders: [Provider] = [
              isLocal: false),
 
     Provider(id: "perplexity", name: "Perplexity",
-             kind: .statuspage(
+             kind: .instatus(
                 apiURL: URL(string: "https://status.perplexity.com/api/v2/summary.json")!,
                 pageURL: URL(string: "https://status.perplexity.com")!),
              isLocal: false),
@@ -206,17 +236,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func fetchProvider(at index: Int) {
+        let finish: (FetchState) -> Void = { [weak self] state in
+            self?.providers[index].state = state
+            self?.updateButton()
+        }
         switch providers[index].kind {
-        case .statuspage(let apiURL, _):
-            fetchStatuspage(url: apiURL) { [weak self] state in
-                self?.providers[index].state = state
-                self?.updateButton()
-            }
-        case .ollama(let baseURL):
-            fetchOllama(url: baseURL) { [weak self] state in
-                self?.providers[index].state = state
-                self?.updateButton()
-            }
+        case .statuspage(let apiURL, _): fetchStatuspage(url: apiURL, completion: finish)
+        case .instatus(let apiURL, _):   fetchInstatus(url: apiURL,   completion: finish)
+        case .ollama(let baseURL):       fetchOllama(url: baseURL,    completion: finish)
         }
     }
 
@@ -238,6 +265,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     components: components,
                     incidents: r.incidents.map(\.name)
                 )))
+            }
+        }.resume()
+    }
+
+    private func fetchInstatus(url: URL, completion: @escaping (FetchState) -> Void) {
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            DispatchQueue.main.async {
+                guard let data,
+                      let r = try? JSONDecoder().decode(InstatusResponse.self, from: data) else {
+                    completion(.error)
+                    return
+                }
+                let health = Health.from(r.page.status)
+                let summary = health == .operational ? "All Systems Operational" : r.page.status
+                completion(.success(ProviderResult(health: health, summary: summary, components: [], incidents: [])))
             }
         }.resume()
     }
@@ -347,7 +389,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        if case .statuspage(_, let pageURL) = provider.kind {
+        let pageURL: URL? = {
+            switch provider.kind {
+            case .statuspage(_, let u): return u
+            case .instatus(_, let u):   return u
+            case .ollama:               return nil
+            }
+        }()
+        if let pageURL {
             sub.addItem(NSMenuItem.separator())
             let open = NSMenuItem(title: "Open Status Page", action: #selector(openURL(_:)), keyEquivalent: "")
             open.target = self
