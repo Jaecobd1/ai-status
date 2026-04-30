@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_NAME="ClaudeStatus"
+APP_NAME="AIStatus"
 BUILD_DIR="$SCRIPT_DIR/build"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 
@@ -28,11 +28,11 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>ClaudeStatus</string>
+    <string>AIStatus</string>
     <key>CFBundleIdentifier</key>
-    <string>com.jakedobler.claudestatus</string>
+    <string>com.jakedobler.aistatus</string>
     <key>CFBundleName</key>
-    <string>Claude Status</string>
+    <string>AI Status</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>
@@ -51,4 +51,4 @@ echo "✅ Built: $APP_BUNDLE"
 echo ""
 echo "Run now:    open '$APP_BUNDLE'"
 echo "Install:    cp -r '$APP_BUNDLE' ~/Applications/"
-echo "Auto-start: Add ~/Applications/$APP_NAME.app to System Settings > General > Login Items"
+echo "Auto-start: Add ~/Applications/AIStatus.app to System Settings > General > Login Items"
