@@ -1,5 +1,7 @@
 import Cocoa
+import Combine
 import Foundation
+import SwiftUI
 
 // MARK: - Health
 
@@ -15,26 +17,25 @@ enum Health: Int, Comparable {
 
     static func from(_ indicator: String) -> Health {
         switch indicator {
-        case "none":                  return .operational
+        case "none":                   return .operational
         case "minor",
-             "degraded_performance":  return .degraded
+             "degraded_performance":   return .degraded
         case "major", "partial_outage": return .partial
         case "critical", "major_outage": return .major
-        // Instatus values (e.g. Perplexity)
-        case "UP":                    return .operational
-        case "HASISSUES":             return .degraded
-        case "UNDERMAINTENANCE":      return .degraded
-        default:                      return .unknown
+        case "UP":                     return .operational   // Instatus
+        case "HASISSUES":              return .degraded
+        case "UNDERMAINTENANCE":       return .degraded
+        default:                       return .unknown
         }
     }
 
     static func fromComponent(_ status: String) -> Health {
         switch status {
-        case "operational":           return .operational
-        case "degraded_performance":  return .degraded
-        case "partial_outage":        return .partial
-        case "major_outage":          return .major
-        default:                      return .unknown
+        case "operational":            return .operational
+        case "degraded_performance":   return .degraded
+        case "partial_outage":         return .partial
+        case "major_outage":           return .major
+        default:                       return .unknown
         }
     }
 
@@ -71,8 +72,8 @@ struct StatuspageResponse: Decodable {
     enum CodingKeys: String, CodingKey { case status, components, incidents }
 
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        status     = try c.decode(PageStatus.self, forKey: .status)
+        let c  = try decoder.container(keyedBy: CodingKeys.self)
+        status     = try  c.decode(PageStatus.self,   forKey: .status)
         components = (try? c.decode([SPComponent].self, forKey: .components)) ?? []
         incidents  = (try? c.decode([SPIncident].self,  forKey: .incidents))  ?? []
     }
@@ -94,7 +95,7 @@ struct SPComponent: Decodable {
         case onlyShowIfDegraded = "only_show_if_degraded"
     }
 
-    // group / only_show_if_degraded are absent in some providers (OpenAI, Groq, Cohere)
+    // group / only_show_if_degraded absent in some providers (OpenAI, Groq, Cohere)
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name               = try  c.decode(String.self, forKey: .name)
@@ -104,27 +105,21 @@ struct SPComponent: Decodable {
     }
 }
 
-struct SPIncident: Decodable {
-    let name: String
-}
+struct SPIncident: Decodable { let name: String }
 
 // MARK: - Instatus JSON (Perplexity)
 
 struct InstatusResponse: Decodable {
     let page: InstatusPage
 }
-
 struct InstatusPage: Decodable {
+    let name: String
     let status: String
-    let name: String
 }
 
-// MARK: - Provider Model
+// MARK: - Provider Models
 
-struct ComponentHealth {
-    let name: String
-    let health: Health
-}
+struct ComponentHealth { let name: String; let health: Health }
 
 struct ProviderResult {
     let health: Health
@@ -133,117 +128,358 @@ struct ProviderResult {
     let incidents: [String]
 }
 
-enum FetchState {
-    case loading
-    case success(ProviderResult)
-    case error
-}
+enum FetchState { case loading, error, success(ProviderResult) }
 
 enum ProviderKind {
     case statuspage(apiURL: URL, pageURL: URL)
-    case instatus(apiURL: URL, pageURL: URL)   // Instatus.com format (e.g. Perplexity)
+    case instatus(apiURL: URL, pageURL: URL)
     case ollama(baseURL: URL)
-    // ── Adding a custom provider ─────────────────────────────────────────────
-    // Statuspage-compatible (includes Instatus):
-    //   .statuspage(
-    //       apiURL: URL(string: "https://status.example.com/api/v2/summary.json")!,
-    //       pageURL: URL(string: "https://status.example.com")!)
-    // Local Ollama on a non-default port:
-    //   .ollama(baseURL: URL(string: "http://localhost:8080")!)
-    // ─────────────────────────────────────────────────────────────────────────
 }
 
 struct Provider {
     let id: String
     let name: String
     let kind: ProviderKind
-    let isLocal: Bool       // true = excluded from the overall dot color
+    let isLocal: Bool
     var state: FetchState = .loading
 }
 
-// MARK: - Provider Registry
-// Add, remove, or reorder providers here.
+// MARK: - Built-in Definitions
 
-var allProviders: [Provider] = [
-    Provider(id: "claude", name: "Claude",
-             kind: .statuspage(
-                apiURL: URL(string: "https://status.claude.com/api/v2/summary.json")!,
-                pageURL: URL(string: "https://status.claude.com")!),
-             isLocal: false),
+struct BuiltInDef { let id: String; let name: String; let kind: ProviderKind; let isLocal: Bool }
 
-    Provider(id: "openai", name: "OpenAI",
-             kind: .statuspage(
-                apiURL: URL(string: "https://status.openai.com/api/v2/summary.json")!,
-                pageURL: URL(string: "https://status.openai.com")!),
-             isLocal: false),
-
-    Provider(id: "groq", name: "Groq",
-             kind: .statuspage(
-                apiURL: URL(string: "https://groqstatus.com/api/v2/summary.json")!,
-                pageURL: URL(string: "https://groqstatus.com")!),
-             isLocal: false),
-
-    Provider(id: "cohere", name: "Cohere",
-             kind: .statuspage(
-                apiURL: URL(string: "https://status.cohere.com/api/v2/summary.json")!,
-                pageURL: URL(string: "https://status.cohere.com")!),
-             isLocal: false),
-
-    Provider(id: "perplexity", name: "Perplexity",
-             kind: .instatus(
-                apiURL: URL(string: "https://status.perplexity.com/api/v2/summary.json")!,
-                pageURL: URL(string: "https://status.perplexity.com")!),
-             isLocal: false),
-
-    Provider(id: "ollama", name: "Ollama",
-             kind: .ollama(baseURL: URL(string: "http://localhost:11434")!),
-             isLocal: true),
+let builtInDefs: [BuiltInDef] = [
+    BuiltInDef(id: "claude", name: "Claude",
+               kind: .statuspage(apiURL: URL(string: "https://status.claude.com/api/v2/summary.json")!,
+                                 pageURL: URL(string: "https://status.claude.com")!), isLocal: false),
+    BuiltInDef(id: "openai", name: "OpenAI",
+               kind: .statuspage(apiURL: URL(string: "https://status.openai.com/api/v2/summary.json")!,
+                                 pageURL: URL(string: "https://status.openai.com")!), isLocal: false),
+    BuiltInDef(id: "groq", name: "Groq",
+               kind: .statuspage(apiURL: URL(string: "https://groqstatus.com/api/v2/summary.json")!,
+                                 pageURL: URL(string: "https://groqstatus.com")!), isLocal: false),
+    BuiltInDef(id: "cohere", name: "Cohere",
+               kind: .statuspage(apiURL: URL(string: "https://status.cohere.com/api/v2/summary.json")!,
+                                 pageURL: URL(string: "https://status.cohere.com")!), isLocal: false),
+    BuiltInDef(id: "perplexity", name: "Perplexity",
+               kind: .instatus(apiURL: URL(string: "https://status.perplexity.com/api/v2/summary.json")!,
+                               pageURL: URL(string: "https://status.perplexity.com")!), isLocal: false),
+    BuiltInDef(id: "ollama", name: "Ollama",
+               kind: .ollama(baseURL: URL(string: "http://localhost:11434")!), isLocal: true),
 ]
+
+// MARK: - Custom Provider
+
+enum CustomProviderType: String, Codable, CaseIterable {
+    case statuspage = "statuspage"
+    case ollama     = "ollama"
+    var label: String { self == .statuspage ? "Status Page" : "Ollama" }
+}
+
+struct CustomProviderDef: Codable, Identifiable {
+    var id: String = UUID().uuidString
+    var name: String
+    var type: CustomProviderType
+    var url: String
+
+    var providerKind: ProviderKind? {
+        let trimmed = url.trimmingCharacters(in: .init(charactersIn: "/"))
+        switch type {
+        case .statuspage:
+            guard let pageURL = URL(string: trimmed),
+                  let apiURL  = URL(string: "\(trimmed)/api/v2/summary.json") else { return nil }
+            return .statuspage(apiURL: apiURL, pageURL: pageURL)
+        case .ollama:
+            guard let base = URL(string: trimmed) else { return nil }
+            return .ollama(baseURL: base)
+        }
+    }
+}
+
+// MARK: - App Settings
+
+extension Notification.Name {
+    static let settingsChanged = Notification.Name("ai-status.settingsChanged")
+}
+
+class AppSettings: ObservableObject {
+    static let shared = AppSettings()
+
+    @Published var enabledIDs: Set<String>       { didSet { persist() } }
+    @Published var pollInterval: Double           { didSet { persist() } }
+    @Published var ollamaURL: String             { didSet { persist() } }
+    @Published var customProviders: [CustomProviderDef] { didSet { persist() } }
+
+    private let ud = UserDefaults.standard
+
+    private init() {
+        let allIDs = builtInDefs.map(\.id)
+        enabledIDs      = Set(ud.stringArray(forKey: "ai-status.enabledIDs") ?? allIDs)
+        pollInterval    = (ud.object(forKey: "ai-status.pollInterval") as? Double) ?? 60
+        ollamaURL       = ud.string(forKey: "ai-status.ollamaURL") ?? "http://localhost:11434"
+        customProviders = (ud.data(forKey: "ai-status.customProviders")
+            .flatMap { try? JSONDecoder().decode([CustomProviderDef].self, from: $0) }) ?? []
+    }
+
+    private func persist() {
+        ud.set(Array(enabledIDs),                                      forKey: "ai-status.enabledIDs")
+        ud.set(pollInterval,                                           forKey: "ai-status.pollInterval")
+        ud.set(ollamaURL,                                              forKey: "ai-status.ollamaURL")
+        ud.set(try? JSONEncoder().encode(customProviders),             forKey: "ai-status.customProviders")
+        NotificationCenter.default.post(name: .settingsChanged, object: nil)
+    }
+
+    func isEnabled(_ id: String) -> Bool { enabledIDs.contains(id) }
+
+    func toggleBinding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { self.enabledIDs.contains(id) },
+            set: { if $0 { self.enabledIDs.insert(id) } else { self.enabledIDs.remove(id) } }
+        )
+    }
+}
+
+// MARK: - Settings View
+
+struct SettingsView: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var newName = ""
+    @State private var newURL  = ""
+    @State private var newType: CustomProviderType = .statuspage
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                providersSection
+                refreshSection
+                customSection
+            }
+            .padding(20)
+        }
+        .frame(width: 480, height: 520)
+    }
+
+    // MARK: Providers
+
+    private var providersSection: some View {
+        section(title: "Providers", icon: "server.rack") {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(builtInDefs, id: \.id) { def in
+                    if def.id == "ollama" {
+                        ollamaRow(def: def)
+                    } else {
+                        Toggle(def.name, isOn: settings.toggleBinding(for: def.id))
+                    }
+                }
+            }
+        }
+    }
+
+    private func ollamaRow(def: BuiltInDef) -> some View {
+        HStack {
+            Toggle(def.name, isOn: settings.toggleBinding(for: def.id))
+            Spacer()
+            if settings.isEnabled(def.id) {
+                TextField("http://localhost:11434", text: $settings.ollamaURL)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 200)
+                    .font(.system(.body, design: .monospaced))
+            }
+        }
+    }
+
+    // MARK: Refresh
+
+    private var refreshSection: some View {
+        section(title: "Refresh Every", icon: "clock") {
+            Picker("", selection: $settings.pollInterval) {
+                Text("30 seconds").tag(30.0)
+                Text("1 minute").tag(60.0)
+                Text("5 minutes").tag(300.0)
+                Text("15 minutes").tag(900.0)
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+        }
+    }
+
+    // MARK: Custom Providers
+
+    private var customSection: some View {
+        section(title: "Custom Providers", icon: "plus.circle") {
+            VStack(alignment: .leading, spacing: 8) {
+                if settings.customProviders.isEmpty {
+                    Text("No custom providers yet.")
+                        .foregroundColor(.secondary)
+                        .font(.callout)
+                } else {
+                    ForEach(settings.customProviders) { cp in
+                        HStack(spacing: 8) {
+                            Text(cp.name)
+                                .frame(width: 100, alignment: .leading)
+                                .lineLimit(1)
+                            Text(cp.url)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Text(cp.type.label)
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                                .frame(width: 72, alignment: .trailing)
+                            Button {
+                                settings.customProviders.removeAll { $0.id == cp.id }
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    Divider()
+                }
+
+                HStack(spacing: 8) {
+                    TextField("Name", text: $newName)
+                        .frame(width: 100)
+                    TextField("https://status.example.com", text: $newURL)
+                    Picker("", selection: $newType) {
+                        ForEach(CustomProviderType.allCases, id: \.self) {
+                            Text($0.label).tag($0)
+                        }
+                    }
+                    .frame(width: 100)
+                    Button("Add") {
+                        guard !newName.isEmpty, !newURL.isEmpty else { return }
+                        settings.customProviders.append(
+                            CustomProviderDef(name: newName, type: newType, url: newURL))
+                        newName = ""
+                        newURL  = ""
+                    }
+                    .disabled(newName.isEmpty || newURL.isEmpty)
+                }
+            }
+        }
+    }
+
+    // MARK: Layout helper
+
+    private func section<Content: View>(title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: icon).font(.headline)
+            GroupBox { content().padding(8) }
+        }
+    }
+}
 
 // MARK: - App Delegate
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private var timer: Timer?
-    private var providers: [Provider] = allProviders
+    private var providers: [Provider] = []
     private var lastUpdated: Date?
+    var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-
         let menu = NSMenu()
         menu.delegate = self
         statusItem?.menu = menu
 
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onSettingsChanged),
+            name: .settingsChanged, object: nil)
+
+        rebuildProviders()
+        startTimer()
+    }
+
+    // MARK: - Settings
+
+    @objc private func onSettingsChanged() {
+        rebuildProviders()
+        restartTimer()
+    }
+
+    private func rebuildProviders() {
+        let s = AppSettings.shared
+        var result: [Provider] = []
+
+        for def in builtInDefs {
+            guard s.isEnabled(def.id) else { continue }
+            var kind = def.kind
+            if def.id == "ollama", let url = URL(string: s.ollamaURL) {
+                kind = .ollama(baseURL: url)
+            }
+            result.append(Provider(id: def.id, name: def.name, kind: kind, isLocal: def.isLocal))
+        }
+
+        for cp in s.customProviders {
+            guard let kind = cp.providerKind else { continue }
+            result.append(Provider(id: cp.id, name: cp.name, kind: kind, isLocal: cp.type == .ollama))
+        }
+
+        providers = result
         updateButton()
         fetchAll()
+    }
 
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+    @objc func openSettings() {
+        if settingsWindow == nil {
+            let controller = NSHostingController(rootView: SettingsView())
+            let window = NSWindow(contentViewController: controller)
+            window.title = "AI Status — Settings"
+            window.styleMask = [.titled, .closable]
+            window.setContentSize(NSSize(width: 480, height: 520))
+            window.center()
+            window.delegate = self
+            settingsWindow = window
+        }
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === settingsWindow else { return }
+        NSApp.setActivationPolicy(.accessory)
+        settingsWindow = nil
+    }
+
+    // MARK: - Timer
+
+    private func startTimer() {
+        let interval = AppSettings.shared.pollInterval
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.fetchAll()
         }
         RunLoop.main.add(timer!, forMode: .common)
+    }
+
+    private func restartTimer() {
+        timer?.invalidate()
+        startTimer()
     }
 
     // MARK: - Fetching
 
     private func fetchAll() {
         lastUpdated = Date()
-        for i in providers.indices {
-            fetchProvider(at: i)
-        }
+        for i in providers.indices { fetchProvider(at: i) }
     }
 
     private func fetchProvider(at index: Int) {
-        let finish: (FetchState) -> Void = { [weak self] state in
+        let done: (FetchState) -> Void = { [weak self] state in
             self?.providers[index].state = state
             self?.updateButton()
         }
         switch providers[index].kind {
-        case .statuspage(let apiURL, _): fetchStatuspage(url: apiURL, completion: finish)
-        case .instatus(let apiURL, _):   fetchInstatus(url: apiURL,   completion: finish)
-        case .ollama(let baseURL):       fetchOllama(url: baseURL,    completion: finish)
+        case .statuspage(let u, _): fetchStatuspage(url: u, completion: done)
+        case .instatus(let u, _):   fetchInstatus(url: u,   completion: done)
+        case .ollama(let u):        fetchOllama(url: u,     completion: done)
         }
     }
 
@@ -252,19 +488,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard let data,
                       let r = try? JSONDecoder().decode(StatuspageResponse.self, from: data) else {
-                    completion(.error)
-                    return
+                    completion(.error); return
                 }
-                let health = Health.from(r.status.indicator)
                 let components = r.components
                     .filter { !$0.group && (!$0.onlyShowIfDegraded || $0.status != "operational") }
                     .map { ComponentHealth(name: $0.name, health: Health.fromComponent($0.status)) }
                 completion(.success(ProviderResult(
-                    health: health,
+                    health: Health.from(r.status.indicator),
                     summary: r.status.description,
                     components: components,
-                    incidents: r.incidents.map(\.name)
-                )))
+                    incidents: r.incidents.map(\.name))))
             }
         }.resume()
     }
@@ -274,12 +507,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 guard let data,
                       let r = try? JSONDecoder().decode(InstatusResponse.self, from: data) else {
-                    completion(.error)
-                    return
+                    completion(.error); return
                 }
                 let health = Health.from(r.page.status)
-                let summary = health == .operational ? "All Systems Operational" : r.page.status
-                completion(.success(ProviderResult(health: health, summary: summary, components: [], incidents: [])))
+                completion(.success(ProviderResult(
+                    health: health,
+                    summary: health == .operational ? "All Systems Operational" : r.page.status,
+                    components: [], incidents: [])))
             }
         }.resume()
     }
@@ -287,17 +521,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func fetchOllama(url: URL, completion: @escaping (FetchState) -> Void) {
         var req = URLRequest(url: url, timeoutInterval: 3)
         req.httpMethod = "GET"
-        URLSession.shared.dataTask(with: req) { _, response, error in
+        URLSession.shared.dataTask(with: req) { _, _, error in
             DispatchQueue.main.async {
                 if error != nil {
                     completion(.success(ProviderResult(
                         health: .unreachable, summary: "Not running",
                         components: [], incidents: [])))
                 } else {
-                    let port = url.port ?? 11434
                     completion(.success(ProviderResult(
                         health: .operational,
-                        summary: "Running on port \(port)",
+                        summary: "Running on port \(url.port ?? 11434)",
                         components: [], incidents: [])))
                 }
             }
@@ -337,54 +570,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        for provider in providers {
-            menu.addItem(makeProviderItem(provider))
+        if providers.isEmpty {
+            menu.addItem(disabled("No providers enabled"))
+        } else {
+            providers.forEach { menu.addItem(makeProviderItem($0)) }
         }
 
-        menu.addItem(NSMenuItem.separator())
+        menu.addItem(.separator())
 
         if let updated = lastUpdated {
             let fmt = RelativeDateTimeFormatter()
             fmt.unitsStyle = .abbreviated
-            let item = NSMenuItem(title: "Updated \(fmt.localizedString(for: updated, relativeTo: Date()))", action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
+            menu.addItem(disabled("Updated \(fmt.localizedString(for: updated, relativeTo: Date()))"))
         }
 
-        let refreshItem = NSMenuItem(title: "Refresh", action: #selector(manualRefresh), keyEquivalent: "r")
-        refreshItem.target = self
-        menu.addItem(refreshItem)
+        let refresh = NSMenuItem(title: "Refresh", action: #selector(manualRefresh), keyEquivalent: "r")
+        refresh.target = self
+        menu.addItem(refresh)
 
-        menu.addItem(NSMenuItem.separator())
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit AI Status", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     private func makeProviderItem(_ provider: Provider) -> NSMenuItem {
-        let health: Health = {
-            if case .success(let r) = provider.state { return r.health }
-            return .unknown
-        }()
-
+        let health: Health = { if case .success(let r) = provider.state { return r.health }; return .unknown }()
         let item = NSMenuItem(title: "\(health.emoji)  \(provider.name)", action: nil, keyEquivalent: "")
-        let sub = NSMenu()
+        let sub  = NSMenu()
 
         switch provider.state {
-        case .loading:
-            sub.addItem(disabled("Loading…"))
-
-        case .error:
-            sub.addItem(disabled("Failed to fetch status"))
-
+        case .loading:           sub.addItem(disabled("Loading…"))
+        case .error:             sub.addItem(disabled("Failed to fetch status"))
         case .success(let r):
             sub.addItem(disabled(r.summary))
-
             if !r.components.isEmpty {
-                sub.addItem(NSMenuItem.separator())
+                sub.addItem(.separator())
                 r.components.forEach { sub.addItem(disabled("\($0.health.emoji)  \($0.name)")) }
             }
-
             if !r.incidents.isEmpty {
-                sub.addItem(NSMenuItem.separator())
+                sub.addItem(.separator())
                 r.incidents.forEach { sub.addItem(disabled("⚠️  \($0)")) }
             }
         }
@@ -397,7 +624,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }()
         if let pageURL {
-            sub.addItem(NSMenuItem.separator())
+            sub.addItem(.separator())
             let open = NSMenuItem(title: "Open Status Page", action: #selector(openURL(_:)), keyEquivalent: "")
             open.target = self
             open.representedObject = pageURL

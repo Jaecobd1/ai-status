@@ -18,6 +18,7 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS"
 
 swiftc \
     -framework Cocoa \
+    -framework SwiftUI \
     -O \
     "$SCRIPT_DIR/main.swift" \
     -o "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
