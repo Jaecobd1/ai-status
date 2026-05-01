@@ -2,7 +2,7 @@
 
 macOS menu bar app that polls the status pages of major AI providers and shows a health indicator at a glance.
 
-![AI Status menu bar app](screenshot.png)
+<img src="screenshot.png" width="340" alt="AI Status menu bar dropdown">
 
 ## Providers
 
@@ -26,27 +26,23 @@ The menu bar dot reflects the worst status across all cloud providers:
 - ⚪️ Unknown / loading
 - ⚫️ Not running (Ollama only — does not affect the overall dot)
 
-Click any provider to see per-component status and active incidents. Polls every 60 seconds.
+Click any provider to see per-component status and active incidents.
+
+## Settings
+
+Open via **Settings…** in the menu or press **⌘,**.
+
+<img src="screenshot-settings.png" width="340" alt="AI Status settings panel">
+
+- **Providers** — toggle each provider on/off; configure the Ollama URL inline
+- **Refresh Every** — 30 seconds, 1 minute, 5 minutes, or 15 minutes
+- **Custom Providers** — add any Statuspage-compatible or Ollama endpoint by name and URL
+
+All settings persist across restarts.
 
 ## Adding a Custom Provider
 
-Edit the `allProviders` array in `main.swift`. Any service using [Statuspage](https://www.atlassian.com/software/statuspage) or [Instatus](https://instatus.com) works out of the box:
-
-```swift
-Provider(id: "myprovider", name: "My Provider",
-         kind: .statuspage(
-            apiURL: URL(string: "https://status.example.com/api/v2/summary.json")!,
-            pageURL: URL(string: "https://status.example.com")!),
-         isLocal: false),
-```
-
-For a local Ollama instance on a custom port:
-
-```swift
-Provider(id: "ollama2", name: "Ollama (8080)",
-         kind: .ollama(baseURL: URL(string: "http://localhost:8080")!),
-         isLocal: true),
-```
+Any service using [Statuspage](https://www.atlassian.com/software/statuspage) or [Instatus](https://instatus.com) works — just enter the base URL (e.g. `https://status.example.com`) and the app appends `/api/v2/summary.json` automatically. For a local Ollama instance on a custom port, choose the **Ollama** type and enter the full URL.
 
 ## Requirements
 
